@@ -1,118 +1,93 @@
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
-local RunService = game:GetService("RunService")
-
 local LocalPlayer = Players.LocalPlayer
-local TARGET_NICKNAME = "CRISTIAN2012q" -- Ник, для которого работает скрипт
 
--- Проверка ника (если это не ты, скрипт не сработает)
-if LocalPlayer.Name ~= TARGET_NICKNAME then
-	warn("Этот скрипт не для тебя!")
+local MY_NAME = "CRISTIAN2012q"
+local FRIEND_NAME = "GAMER_Cyber88"
+
+if LocalPlayer.Name ~= MY_NAME then
 	script:Destroy()
 	return
 end
 
--- Папка с подарками
-local presentsFolder = Workspace:WaitForChild("Presents", 10)
-if not presentsFolder then
-	warn("Папка Presents не найдена!")
-	return
-end
+local Folder = Workspace:WaitForChild("Presents", 10)
+if not Folder then return end
 
--------------------------------------------------------------------------
--- СОЗДАНИЕ ИНТЕРФЕЙСА (КНОПКИ)
--------------------------------------------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "TeleportGUI"
+ScreenGui.Name = "AutoTP_GUI"
 ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false
 
-local ToggleButton = Instance.new("TextButton")
-ToggleButton.Name = "ToggleBtn"
-ToggleButton.Parent = ScreenGui
-ToggleButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Красный по умолчанию
-ToggleButton.Position = UDim2.new(0, 10, 0.5, 0) -- Слева по центру
-ToggleButton.Size = UDim2.new(0, 150, 0, 50)
-ToggleButton.Font = Enum.Font.SourceSansBold
-ToggleButton.TextSize = 20
-ToggleButton.Text = "TP: ВЫКЛ"
-ToggleButton.TextColor3 = Color3.new(1, 1, 1)
+local Button = Instance.new("TextButton")
+Button.Name = "ToggleBtn"
+Button.Parent = ScreenGui
+Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+Button.Position = UDim2.new(0, 10, 0.5, 0)
+Button.Size = UDim2.new(0, 160, 0, 50)
+Button.Font = Enum.Font.SourceSansBold
+Button.TextSize = 18
+Button.Text = "TP: OFF"
+Button.TextColor3 = Color3.new(1, 1, 1)
 
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0, 8)
-UICorner.Parent = ToggleButton
+local Corner = Instance.new("UICorner")
+Corner.CornerRadius = UDim.new(0, 8)
+Corner.Parent = Button
 
--------------------------------------------------------------------------
--- ЛОГИКА
--------------------------------------------------------------------------
-local isEnabled = false -- Включен ли авто-телепорт
-local isSafe = true -- Безопасно ли (мало игроков)
+local Enabled = false
+local IsSafe = false
 
--- Функция проверки количества игроков
-local function checkPlayerCount()
+local function UpdateSafety()
 	local count = #Players:GetPlayers()
+	local friend = Players:FindFirstChild(FRIEND_NAME)
 	
 	if count > 2 then
-		-- Если больше 2 человек
-		isSafe = false
-		isEnabled = false -- Принудительно выключаем
-		ToggleButton.BackgroundColor3 = Color3.fromRGB(100, 0, 0) -- Темно-красный
-		ToggleButton.Text = "БЛОК (>2 Игроков)"
-		ToggleButton.Active = false -- Запрещаем нажимать
+		IsSafe = false
+		Button.Text = "BLOCKED (>2 Players)"
+	elseif not friend then
+		IsSafe = false
+		Button.Text = "BLOCKED (No Gamer)"
 	else
-		-- Если 2 человека или меньше
-		isSafe = true
-		ToggleButton.Active = true -- Разрешаем нажимать
-		if not isEnabled then
-			ToggleButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-			ToggleButton.Text = "TP: ВЫКЛ"
+		IsSafe = true
+	end
+
+	if not IsSafe then
+		Enabled = false
+		Button.Active = false
+		Button.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+	else
+		Button.Active = true
+		if Enabled then
+			Button.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
+			Button.Text = "TP: ON"
+		else
+			Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+			Button.Text = "TP: OFF"
 		end
 	end
 end
 
--- Обработка нажатия кнопки
-ToggleButton.MouseButton1Click:Connect(function()
-	if not isSafe then return end -- Не даем включить, если опасно
-
-	isEnabled = not isEnabled -- Переключаем состояние
-	
-	if isEnabled then
-		ToggleButton.BackgroundColor3 = Color3.fromRGB(0, 200, 0) -- Зеленый
-		ToggleButton.Text = "TP: ВКЛЮЧЕНО"
-	else
-		ToggleButton.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Красный
-		ToggleButton.Text = "TP: ВЫКЛ"
-	end
+Button.MouseButton1Click:Connect(function()
+	if not IsSafe then return end
+	Enabled = not Enabled
+	UpdateSafety()
 end)
 
--- Функция телепортации
-local function teleportTo(object)
-	if not isEnabled then return end
-	if not isSafe then return end
-
-	local char = LocalPlayer.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	
-	if hrp then
-		-- Используем :GetPivot(), чтобы работало и для Part, и для Model
-		local targetCFrame = object:GetPivot()
-		
-		if targetCFrame then
-			-- Телепортируем немного выше объекта, чтобы не застрять
-			hrp.CFrame = targetCFrame + Vector3.new(0, 3, 0)
-		end
-	end
-end
-
--- Следим за новыми объектами в папке Presents
-presentsFolder.ChildAdded:Connect(function(child)
-	-- Ждем долю секунды, чтобы объект прогрузился физически
+Folder.ChildAdded:Connect(function(child)
+	if not Enabled then return end
 	task.wait(0.1)
-	teleportTo(child)
+	
+	local Char = LocalPlayer.Character
+	local HRP = Char and Char:FindFirstChild("HumanoidRootPart")
+	
+	if HRP and child then
+		local targetCF = child:GetPivot()
+		if targetCF then
+			HRP.CFrame = targetCF + Vector3.new(0, 3, 0)
+		end
+	end
 end)
 
--- Подключаем проверку игроков
-Players.PlayerAdded:Connect(checkPlayerCount)
-Players.PlayerRemoved:Connect(checkPlayerCount)
+Players.PlayerAdded:Connect(UpdateSafety)
+Players.PlayerRemoved:Connect(UpdateSafety)
 
--- Запускаем проверку сразу при старте
-checkPlayerCount()
+UpdateSafety()
