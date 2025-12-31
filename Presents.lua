@@ -40,28 +40,22 @@ local function UpdateSafety()
 	local count = #Players:GetPlayers()
 	local friend = Players:FindFirstChild(FRIEND_NAME)
 	
-	-- ЛОГИКА ЗАЩИТЫ:
-	-- 1. Если больше 2 человек -> ОПАСНО (даже если друг есть)
 	if count > 2 then
 		IsSafe = false
 		Button.Text = "BLOCKED (>2 Players)"
-	
-	-- 2. Если друга нет -> ОПАСНО (даже если сервер пустой)
 	elseif not friend then
 		IsSafe = false
 		Button.Text = "BLOCKED (No Gamer)"
-	
-	-- 3. Если <= 2 человек И друг есть -> БЕЗОПАСНО
 	else
 		IsSafe = true
 	end
 
 	if not IsSafe then
-		Enabled = false -- Вырубаем скрипт
-		Button.Active = false -- Запрещаем нажимать
-		Button.BackgroundColor3 = Color3.fromRGB(100, 0, 0) -- Темно-красный
+		Enabled = false
+		Button.Active = false
+		Button.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
 	else
-		Button.Active = true -- Разрешаем нажимать
+		Button.Active = true
 		if Enabled then
 			Button.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
 			Button.Text = "TP: ON"
@@ -94,6 +88,6 @@ Folder.ChildAdded:Connect(function(child)
 end)
 
 Players.PlayerAdded:Connect(UpdateSafety)
-Players.PlayerRemoving:Connect(UpdateSafety) -- ИСПРАВЛЕНО ЗДЕСЬ
+Players.PlayerRemoving:Connect(UpdateSafety)
 
 UpdateSafety()
