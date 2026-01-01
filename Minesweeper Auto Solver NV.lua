@@ -14,7 +14,7 @@ local settings = {
     isAutoSolving = false,
     isLegitActive = false,
     isWaitingForRound = false,
-    freezeEnabled = false, -- По умолчанию выключено
+    freezeEnabled = false,
     autoGuess = true,
     actionDelay = 0.1,
     startDelayTime = 10,
@@ -904,7 +904,7 @@ local function updateTabs()
     ragePage.Visible = settings.currentTab == "rage"
     legitPage.Visible = settings.currentTab == "legit"
     settingsPage.Visible = settings.currentTab == "settings"
-    statusBtn.Visible = settings.currentTab ~= "settings" -- Скрывает кнопку запуска во вкладке настроек
+    statusBtn.Visible = settings.currentTab ~= "settings"
 end
 
 btnRage.MouseButton1Click:Connect(function()
