@@ -36,20 +36,21 @@ local solverNeighborCache = {}
 local highlightCache = {}
 local lastCalcTime = 0
 local lastNotifyTime = 0
+local lastActionTime = tick()
 local isGuessing = false
 local stopCurrentExecution = false
 local isWalking = false
 local cachedPartsFolder = nil
 local partsFolderTime = 0
-local cachedOpenCells = {}
-local openCellsTime = 0
+local cachedWalkableCells = {}
+local walkableCellsTime = 0
 local cachedTargets = {}
 local targetsTime = 0
 local solverDataCache = {}
 local solverDataTime = 0
 local visualPool = {}
 local activeVisuals = {}
-local openCellsSet = {}
+local walkableCellsSet = {}
 
 local VisualsFolder = workspace:FindFirstChild("AutosolverVisuals")
 if not VisualsFolder then
@@ -59,8 +60,7 @@ if not VisualsFolder then
 end
 
 local function getSafeParent()
-    if gethui then return gethui() end
-    return game:GetService("CoreGui")
+    return player:WaitForChild("PlayerGui")
 end
 
 for _, name in pairs({"autosolver_euler", "autosolver_final", "autosolver", "AutosolverUI"}) do
@@ -101,6 +101,14 @@ local function isSafeMarked(part)
     return part and part.Parent and part.Color == COLOR_WHITE
 end
 
+local function isWalkable(part)
+    if not part or not part.Parent then return false end
+    if isMine(part) then return false end
+    if isCellOpen(part) then return true end
+    if isSafeMarked(part) then return true end
+    return false
+end
+
 local function getVisual()
     local v = table.remove(visualPool)
     if v then return v end
@@ -125,11 +133,11 @@ end
 local function clearCaches()
     solverNeighborCache = {}
     highlightCache = {}
-    cachedOpenCells = {}
+    cachedWalkableCells = {}
     cachedTargets = {}
     solverDataCache = {}
-    openCellsSet = {}
-    openCellsTime = 0
+    walkableCellsSet = {}
+    walkableCellsTime = 0
     targetsTime = 0
     solverDataTime = 0
     isGuessing = false
@@ -183,31 +191,31 @@ local function getPartsFolder()
     return cachedPartsFolder
 end
 
-local function getOpenCells()
+local function getWalkableCells()
     local t = tick()
-    if t - openCellsTime < 0.15 then return cachedOpenCells, openCellsSet end
-    openCellsTime = t
+    if t - walkableCellsTime < 0.1 then return cachedWalkableCells, walkableCellsSet end
+    walkableCellsTime = t
     
     local folder = getPartsFolder()
     if not folder then 
-        cachedOpenCells = {}
-        openCellsSet = {}
-        return cachedOpenCells, openCellsSet 
+        cachedWalkableCells = {}
+        walkableCellsSet = {}
+        return cachedWalkableCells, walkableCellsSet 
     end
     
-    local open = {}
-    local openSet = {}
+    local walkable = {}
+    local walkableSet = {}
     local children = folder:GetChildren()
     for i = 1, #children do
         local cell = children[i]
-        if isCellOpen(cell) and not isMine(cell) then
-            open[#open + 1] = cell
-            openSet[cell] = true
+        if isWalkable(cell) then
+            walkable[#walkable + 1] = cell
+            walkableSet[cell] = true
         end
     end
-    cachedOpenCells = open
-    openCellsSet = openSet
-    return open, openSet
+    cachedWalkableCells = walkable
+    walkableCellsSet = walkableSet
+    return walkable, walkableSet
 end
 
 local function createPathVisuals(path, target)
@@ -239,14 +247,14 @@ local function createPathVisuals(path, target)
     end
 end
 
-local function getPathNeighbors(cell, openCells, openSet)
+local function getPathNeighbors(cell, walkableCells, walkableSet)
     local neighbors = {}
     local p1 = cell.Position
     local size = cell.Size.X
     local maxDist = size * 1.5
     
-    for i = 1, #openCells do
-        local other = openCells[i]
+    for i = 1, #walkableCells do
+        local other = walkableCells[i]
         if other == cell then continue end
         
         local p2 = other.Position
@@ -268,10 +276,10 @@ local function getPathNeighbors(cell, openCells, openSet)
     return neighbors
 end
 
-local function findPathAStar(startCell, targetCell, openCells, openSet)
+local function findPathAStar(startCell, targetCell, walkableCells, walkableSet)
     if not startCell or not targetCell then return nil end
     if startCell == targetCell then return {startCell} end
-    if not openSet[startCell] or not openSet[targetCell] then return nil end
+    if not walkableSet[startCell] or not walkableSet[targetCell] then return nil end
     
     local openList = {startCell}
     local closedSet = {}
@@ -281,7 +289,7 @@ local function findPathAStar(startCell, targetCell, openCells, openSet)
     
     local iterations = 0
     
-    while #openList > 0 and iterations < 400 do
+    while #openList > 0 and iterations < 500 do
         iterations = iterations + 1
         
         local current = nil
@@ -311,12 +319,12 @@ local function findPathAStar(startCell, targetCell, openCells, openSet)
         table.remove(openList, currentIdx)
         closedSet[current] = true
         
-        local neighbors = getPathNeighbors(current, openCells, openSet)
+        local neighbors = getPathNeighbors(current, walkableCells, walkableSet)
         
         for i = 1, #neighbors do
             local neighbor = neighbors[i]
             if closedSet[neighbor] then continue end
-            if not openSet[neighbor] then continue end
+            if not walkableSet[neighbor] then continue end
             
             local moveCost = (current.Position - neighbor.Position).Magnitude
             local tentativeG = (gScore[current] or math.huge) + moveCost
@@ -343,7 +351,7 @@ local function findPathAStar(startCell, targetCell, openCells, openSet)
     return nil
 end
 
-local function findClosestCell(position, cells)
+local function findClosestWalkableCell(position, cells)
     local closest = nil
     local closestDist = math.huge
     for i = 1, #cells do
@@ -360,7 +368,7 @@ end
 
 local function getAllSafeTargets()
     local t = tick()
-    if t - targetsTime < 0.3 then return cachedTargets end
+    if t - targetsTime < 0.15 then return cachedTargets end
     targetsTime = t
     
     local folder = getPartsFolder()
@@ -381,41 +389,11 @@ local function getAllSafeTargets()
     return targets
 end
 
-local function getAdjacentOpenCell(targetCell, openCells, openSet)
-    local size = targetCell.Size.X
-    local maxDist = size * 1.5
-    local closest = nil
-    local closestDist = math.huge
-    local targetPos = targetCell.Position
-    
-    for i = 1, #openCells do
-        local cell = openCells[i]
-        local p2 = cell.Position
-        
-        local dx = math.abs(targetPos.X - p2.X)
-        local dz = math.abs(targetPos.Z - p2.Z)
-        
-        if dx > maxDist or dz > maxDist then continue end
-        
-        local alignedX = dx < 1
-        local alignedZ = dz < 1
-        
-        if not alignedX and not alignedZ then continue end
-        
-        local dist = math.sqrt(dx*dx + dz*dz)
-        if dist < maxDist and dist > 0.1 and dist < closestDist then
-            closestDist = dist
-            closest = cell
-        end
-    end
-    return closest
-end
-
-local function findBestTarget(rootPos, openCells, openSet)
+local function findBestTarget(rootPos, walkableCells, walkableSet)
     local targets = getAllSafeTargets()
     if #targets == 0 then return nil, nil end
     
-    local startCell = findClosestCell(rootPos, openCells)
+    local startCell = findClosestWalkableCell(rootPos, walkableCells)
     if not startCell then return nil, nil end
     
     table.sort(targets, function(a, b)
@@ -424,12 +402,11 @@ local function findBestTarget(rootPos, openCells, openSet)
         return da < db
     end)
     
-    for i = 1, math.min(#targets, 8) do
+    for i = 1, math.min(#targets, 5) do
         local target = targets[i]
-        local adjacentCell = getAdjacentOpenCell(target, openCells, openSet)
-        if adjacentCell then
-            local path = findPathAStar(startCell, adjacentCell, openCells, openSet)
-            if path then
+        if walkableSet[target] then
+            local path = findPathAStar(startCell, target, walkableCells, walkableSet)
+            if path and #path <= 15 then
                 return target, path
             end
         end
@@ -490,7 +467,7 @@ local function walkPath(path, targetCell)
             acceptRadius = 0.8 + h * 0.7
         end
         
-        local timeout = 4
+        local timeout = 3
         local startTime = tick()
         
         while tick() - startTime < timeout do
@@ -515,36 +492,12 @@ local function walkPath(path, targetCell)
         end
         
         if h > 0.01 and not isLast then
-            task.wait(0.02 * h + math.random() * 0.06 * h)
-        end
-    end
-    
-    if targetCell and not isCellOpen(targetCell) then
-        local targetPos = targetCell.Position
-        humanoid:MoveTo(targetPos)
-        
-        local finalRadius = 1.0 + h * 0.5
-        local startTime = tick()
-        
-        while tick() - startTime < 3 do
-            if stopCurrentExecution or not settings.isLegitActive then break end
-            if isCellOpen(targetCell) then break end
-            
-            local rootPos = root.Position
-            local dx = rootPos.X - targetPos.X
-            local dz = rootPos.Z - targetPos.Z
-            
-            if dx*dx + dz*dz < finalRadius * finalRadius then
-                break
-            end
-            
-            humanoid:MoveTo(targetPos)
-            RunService.Heartbeat:Wait()
+            task.wait(0.02 * h + math.random() * 0.05 * h)
         end
     end
     
     if h > 0.01 then
-        task.wait(0.05 * h + math.random() * 0.15 * h)
+        task.wait(0.03 * h + math.random() * 0.1 * h)
     end
     
     humanoid.WalkSpeed = baseSpeed
@@ -560,10 +513,10 @@ local function doPathfinding()
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
     
-    local openCells, openSet = getOpenCells()
-    if #openCells == 0 then return end
+    local walkableCells, walkableSet = getWalkableCells()
+    if #walkableCells == 0 then return end
     
-    local target, path = findBestTarget(root.Position, openCells, openSet)
+    local target, path = findBestTarget(root.Position, walkableCells, walkableSet)
     if not target or not path then return end
     
     task.spawn(function()
@@ -576,15 +529,17 @@ local function teleportTo(target)
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    
-    local parts = char:GetDescendants()
-    for i = 1, #parts do
-        local p = parts[i]
-        if p:IsA("BasePart") then p.Anchored = false end
+    if not stopCurrentExecution and settings.freezeEnabled and settings.currentTab == "rage" then
+        for _, p in ipairs(char:GetDescendants()) do 
+            if p:IsA("BasePart") then p.Anchored = false end 
+        end
+        root.CFrame = target.CFrame * CFrame.new(0, 5, 0)
+        root.Velocity = Vector3.new(0, -100, 0)
+        task.wait(0.01)
+        updatePhysics()
+    elseif not stopCurrentExecution then
+        root.CFrame = target.CFrame * CFrame.new(0, 5, 0)
     end
-    root.CFrame = target.CFrame * CFrame.new(0, 5, 0)
-    task.wait(0.01)
-    updatePhysics()
 end
 
 local function getSolverNeighbors(cell, allParts)
@@ -608,161 +563,158 @@ local function getSolverData()
     local folder = getPartsFolder()
     if not folder then return {} end
     
-    local t = tick()
-    local cacheTime = settings.currentTab == "legit" and 0.2 or 0.08
-    if t - solverDataTime < cacheTime then return solverDataCache end
-    solverDataTime = t
-    
     local numberData = {}
     local allParts = folder:GetChildren()
     
-    for i = 1, #allParts do
-        local cell = allParts[i]
+    for _, cell in ipairs(allParts) do
         if not isCellOpen(cell) then continue end
         
         local gui = cell:FindFirstChild("NumberGui")
         if not gui then continue end
         local label = gui:FindFirstChildOfClass("TextLabel")
         local val = label and tonumber(label.Text) or 0
-        if val == 0 then continue end
         
-        local nbs = getSolverNeighbors(cell, allParts)
+        if not solverNeighborCache[cell] then
+            local nbs = {}
+            for _, n in ipairs(allParts) do 
+                if n ~= cell and (n.Position - cell.Position).Magnitude < (cell.Size.X * 1.8) then 
+                    table.insert(nbs, n) 
+                end 
+            end
+            solverNeighborCache[cell] = nbs
+        end
         
-        local hidden = {}
-        local mines = 0
-        for j = 1, #nbs do
-            local n = nbs[j]
+        local hidden, mines = {}, 0
+        for _, n in ipairs(solverNeighborCache[cell]) do
             if not isCellOpen(n) then
-                if isMine(n) then 
+                if n.Color == COLOR_BLACK then 
                     mines = mines + 1 
                 else 
-                    hidden[#hidden + 1] = n 
+                    table.insert(hidden, n) 
                 end
             end
         end
         
-        if #hidden > 0 then 
-            numberData[#numberData + 1] = {obj = cell, eVal = val - mines, hidden = hidden}
+        if #hidden > 0 or val == 0 then 
+            table.insert(numberData, {obj = cell, eVal = val - mines, hidden = hidden}) 
         end
     end
     
-    solverDataCache = numberData
     return numberData
 end
 
 local function solve()
-    if stopCurrentExecution or settings.isWaitingForRound then return end
-    if not settings.isAutoSolving and not settings.isLegitActive then return end
+    if stopCurrentExecution then return end
+    if settings.currentTab == "legit" and settings.isLegitActive then
+        if tick() - lastCalcTime < settings.calculateDelay then return end
+    end
+    if (not settings.isAutoSolving and not settings.isLegitActive) or settings.isWaitingForRound then return end
+    lastCalcTime = tick()
     
-    local t = tick()
-    local delay = settings.currentTab == "legit" and settings.calculateDelay or 0.08
-    if t - lastCalcTime < delay then return end
-    
-    lastCalcTime = t
     local data = getSolverData()
-    local safeQueue = {}
-    local mineQueue = {}
+    local safeQueue, mineQueue, riskyCells = {}, {}, {}
     local foundAnything = false
-    
-    local dataCount = #data
-    for i = 1, dataCount do
-        local d1 = data[i]
-        for j = 1, dataCount do
-            if i == j then continue end
-            local d2 = data[j]
-            if (d1.obj.Position - d2.obj.Position).Magnitude > 12 then continue end
-            
-            local s1, s2 = d1.hidden, d2.hidden
-            if #s2 <= #s1 then continue end
-            
-            local isSubset = true
-            for k = 1, #s1 do
-                local x = s1[k]
-                local found = false
-                for l = 1, #s2 do
-                    if x == s2[l] then found = true break end
-                end
-                if not found then isSubset = false break end
-            end
-            
-            if isSubset then
-                local diffMines = d2.eVal - d1.eVal
-                local diffCells = {}
-                for k = 1, #s2 do
-                    local x = s2[k]
-                    local inS1 = false
-                    for l = 1, #s1 do
-                        if x == s1[l] then inS1 = true break end
+
+    for i = 1, #data do
+        for j = 1, #data do
+            if i ~= j then
+                local d1, d2 = data[i], data[j]
+                if (d1.obj.Position - d2.obj.Position).Magnitude < 12 then
+                    local s1, s2 = d1.hidden, d2.hidden
+                    local isSubset = true
+                    for _, x in ipairs(s1) do
+                        local found = false
+                        for _, y in ipairs(s2) do 
+                            if x == y then found = true; break end 
+                        end
+                        if not found then isSubset = false; break end
                     end
-                    if not inS1 then diffCells[#diffCells + 1] = x end
-                end
-                
-                if diffMines == 0 then
-                    for k = 1, #diffCells do safeQueue[diffCells[k]] = true end
-                    foundAnything = true
-                elseif diffMines == #diffCells then
-                    for k = 1, #diffCells do mineQueue[diffCells[k]] = true end
-                    foundAnything = true
+                    if isSubset and #s2 > #s1 then
+                        local diffMines = d2.eVal - d1.eVal
+                        local diffCells = {}
+                        for _, x in ipairs(s2) do
+                            local inS1 = false
+                            for _, y in ipairs(s1) do 
+                                if x == y then inS1 = true; break end 
+                            end
+                            if not inS1 then table.insert(diffCells, x) end
+                        end
+                        if diffMines == 0 then
+                            for _, n in ipairs(diffCells) do 
+                                table.insert(safeQueue, n)
+                                foundAnything = true 
+                            end
+                        elseif diffMines == #diffCells then
+                            for _, n in ipairs(diffCells) do 
+                                table.insert(mineQueue, n)
+                                foundAnything = true 
+                            end
+                        end
+                    end
                 end
             end
         end
     end
 
-    for i = 1, dataCount do
-        local d = data[i]
-        if #d.hidden == d.eVal then
-            for j = 1, #d.hidden do mineQueue[d.hidden[j]] = true end
-            foundAnything = true
-        elseif d.eVal <= 0 then
-            for j = 1, #d.hidden do safeQueue[d.hidden[j]] = true end
-            foundAnything = true
+    local basicSafe, basicMines = {}, {}
+    for _, d in ipairs(data) do
+        if #d.hidden > 0 then
+            if #d.hidden == d.eVal then
+                for _, n in ipairs(d.hidden) do 
+                    table.insert(basicMines, n)
+                    foundAnything = true 
+                end
+            elseif d.eVal <= 0 then
+                for _, n in ipairs(d.hidden) do 
+                    table.insert(basicSafe, n)
+                    foundAnything = true 
+                end
+            end
         end
-    end
-
-    for m in pairs(mineQueue) do 
-        if m and m.Parent then m.Color = COLOR_BLACK end
     end
 
     if settings.currentTab == "rage" and settings.isAutoSolving then
-        for s in pairs(safeQueue) do 
-            if stopCurrentExecution or not settings.isAutoSolving then break end 
-            if not isCellOpen(s) and not isMine(s) then 
-                teleportTo(s)
-                task.wait(settings.actionDelay) 
-            end
-        end
-        
-        if settings.autoGuess and not foundAnything then
-            local riskyCells = {}
-            for i = 1, dataCount do
-                local d = data[i]
-                for j = 1, #d.hidden do
-                    local n = d.hidden[j]
-                    if not isMine(n) then 
-                        riskyCells[n] = (riskyCells[n] or 0) + 1 
-                    end
+        for _, m in ipairs(mineQueue) do m.Color = COLOR_BLACK end
+        for _, m in ipairs(basicMines) do m.Color = COLOR_BLACK end
+        local targetQueue = #safeQueue > 0 and safeQueue or basicSafe
+        if #targetQueue > 0 then
+            isGuessing = false
+            for _, s in ipairs(targetQueue) do 
+                if stopCurrentExecution or not settings.isAutoSolving then break end 
+                if not isCellOpen(s) then 
+                    teleportTo(s)
+                    task.wait(settings.actionDelay) 
                 end
+            end
+        elseif settings.autoGuess and not foundAnything and tick() - lastActionTime > 0.8 then
+            for _, d in ipairs(data) do 
+                for _, n in ipairs(d.hidden) do 
+                    if n.Color ~= COLOR_BLACK then 
+                        riskyCells[n] = (riskyCells[n] or 0) + 1 
+                    end 
+                end 
             end
             local best, maxW = nil, -1
             for c, w in pairs(riskyCells) do 
-                if w > maxW then maxW, best = w, c end 
+                if w > maxW then maxW = w; best = c end 
             end
             if best then 
                 isGuessing = true
                 teleportTo(best)
+                lastActionTime = tick() 
             end
         end
         
     elseif settings.currentTab == "legit" and settings.isLegitActive then
-        for s in pairs(safeQueue) do 
-            if s and s.Parent and highlightCache[s] ~= "safe" then
-                s.Color = COLOR_WHITE
-                highlightCache[s] = "safe"
-            end
-        end
+        local finalMines = #mineQueue > 0 and mineQueue or basicMines
+        local finalSafe = #safeQueue > 0 and safeQueue or basicSafe
         
-        if settings.pathfindingEnabled and not isWalking then
-            doPathfinding()
+        for _, m in ipairs(finalMines) do 
+            m.Color = COLOR_BLACK
+        end
+        for _, s in ipairs(finalSafe) do 
+            s.Color = COLOR_WHITE
+            highlightCache[s] = "safe"
         end
     end
 end
@@ -1102,6 +1054,11 @@ local lastStatusTime = 0
 task.spawn(function()
     while true do
         pcall(solve)
+        
+        if settings.currentTab == "legit" and settings.isLegitActive and settings.pathfindingEnabled and not isWalking and not settings.isWaitingForRound then
+            pcall(doPathfinding)
+        end
+        
         local t = tick()
         if t - lastStatusTime > 0.25 then
             lastStatusTime = t
