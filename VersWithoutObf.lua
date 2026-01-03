@@ -5,6 +5,10 @@ local TextChatService = game:GetService("TextChatService")
 local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 
+local mathClamp, mathFloor, mathAbs, mathSqrt, mathMin, mathMax, mathRandom, mathHuge = math.clamp, math.floor, math.abs, math.sqrt, math.min, math.max, math.random, math.huge
+local tableInsert, tableRemove, tableSort = table.insert, table.remove, table.sort
+local tick, pcall, pairs, ipairs, tostring, tonumber = tick, pcall, pairs, ipairs, tostring, tonumber
+
 local success, Controls = pcall(function() 
     return require(player.PlayerScripts:WaitForChild("PlayerModule")):GetControls()
 end)
@@ -30,13 +34,16 @@ local COLOR_BLACK = Color3.new(0, 0, 0)
 local COLOR_WHITE = Color3.new(1, 1, 1)
 local COLOR_RED = Color3.fromRGB(255, 50, 50)
 local COLOR_BLUE = Color3.fromRGB(0, 150, 255)
+local COLOR_GRAY = Color3.fromRGB(45, 45, 50)
+local COLOR_TEXT = Color3.fromRGB(200, 200, 200)
+local COLOR_INACTIVE = Color3.fromRGB(150, 150, 150)
 
 local waitTimeLeft = 0
 local solverNeighborCache = {}
 local highlightCache = {}
 local lastCalcTime = 0
 local lastNotifyTime = 0
-local lastActionTime = tick()
+local lastActionTime = 0
 local isGuessing = false
 local stopCurrentExecution = false
 local isWalking = false
@@ -46,26 +53,22 @@ local cachedWalkableCells = {}
 local walkableCellsTime = 0
 local cachedTargets = {}
 local targetsTime = 0
-local solverDataCache = {}
-local solverDataTime = 0
 local visualPool = {}
 local activeVisuals = {}
 local walkableCellsSet = {}
+local guessHistory = {}
+local consecutiveGuesses = 0
+local lastStatusTime = 0
 
-local VisualsFolder = workspace:FindFirstChild("AutosolverVisuals")
-if not VisualsFolder then
-    VisualsFolder = Instance.new("Folder")
-    VisualsFolder.Name = "AutosolverVisuals"
-    VisualsFolder.Parent = workspace
-end
+local VisualsFolder = Instance.new("Folder")
+VisualsFolder.Name = "AutosolverVisuals"
+VisualsFolder.Parent = workspace
 
-local function getSafeParent()
-    return player:WaitForChild("PlayerGui")
-end
+local playerGui = player:WaitForChild("PlayerGui")
 
-for _, name in pairs({"autosolver_euler", "autosolver_final", "autosolver", "AutosolverUI"}) do
-    pcall(function() getSafeParent()[name]:Destroy() end)
-    pcall(function() player.PlayerGui[name]:Destroy() end)
+for _, name in ipairs({"autosolver_euler", "autosolver_final", "autosolver", "AutosolverUI"}) do
+    local gui = playerGui:FindFirstChild(name)
+    if gui then gui:Destroy() end
 end
 
 local function chatNotify(msg)
@@ -81,14 +84,13 @@ local function chatNotify(msg)
                 return 
             end
         end
-        StarterGui:SetCore("ChatMakeSystemMessage", {Text = "[autosolver]: " .. msg, Color = Color3.fromRGB(200, 200, 200)})
+        StarterGui:SetCore("ChatMakeSystemMessage", {Text = "[autosolver]: " .. msg, Color = COLOR_TEXT})
     end)
 end
 
 local function isCellOpen(part)
     if not part or not part.Parent then return true end
-    if part.Transparency > 0.5 then return true end
-    if part:FindFirstChild("NumberGui") then return true end
+    if part.Transparency > 0.5 or part:FindFirstChild("NumberGui") then return true end
     local c = part.Color
     return c.R > 0.7 and c.G > 0.7 and c.B < 0.6
 end
@@ -102,15 +104,12 @@ local function isSafeMarked(part)
 end
 
 local function isWalkable(part)
-    if not part or not part.Parent then return false end
-    if isMine(part) then return false end
-    if isCellOpen(part) then return true end
-    if isSafeMarked(part) then return true end
-    return false
+    if not part or not part.Parent or isMine(part) then return false end
+    return isCellOpen(part) or isSafeMarked(part)
 end
 
 local function getVisual()
-    local v = table.remove(visualPool)
+    local v = tableRemove(visualPool)
     if v then return v end
     local ball = Instance.new("SphereHandleAdornment")
     ball.AlwaysOnTop = true
@@ -135,13 +134,13 @@ local function clearCaches()
     highlightCache = {}
     cachedWalkableCells = {}
     cachedTargets = {}
-    solverDataCache = {}
     walkableCellsSet = {}
     walkableCellsTime = 0
     targetsTime = 0
-    solverDataTime = 0
     isGuessing = false
     isWalking = false
+    guessHistory = {}
+    consecutiveGuesses = 0
     clearVisuals()
 end
 
@@ -170,9 +169,7 @@ local function updatePhysics()
     local char = player.Character
     if not char then return end
     local active = settings.isAutoSolving and not settings.isWaitingForRound and settings.freezeEnabled and settings.currentTab == "rage"
-    local parts = char:GetDescendants()
-    for i = 1, #parts do
-        local p = parts[i]
+    for _, p in ipairs(char:GetDescendants()) do
         if p:IsA("BasePart") then p.Anchored = active end
     end
     if Controls then
@@ -203,11 +200,8 @@ local function getWalkableCells()
         return cachedWalkableCells, walkableCellsSet 
     end
     
-    local walkable = {}
-    local walkableSet = {}
-    local children = folder:GetChildren()
-    for i = 1, #children do
-        local cell = children[i]
+    local walkable, walkableSet = {}, {}
+    for _, cell in ipairs(folder:GetChildren()) do
         if isWalkable(cell) then
             walkable[#walkable + 1] = cell
             walkableSet[cell] = true
@@ -233,7 +227,7 @@ local function createPathVisuals(path, target)
     end
     
     if path then
-        local step = math.max(1, math.floor(#path / 10))
+        local step = mathMax(1, mathFloor(#path / 10))
         for i = 1, #path, step do
             local ball = getVisual()
             ball.Adornee = path[i]
@@ -250,27 +244,20 @@ end
 local function getPathNeighbors(cell, walkableCells, walkableSet)
     local neighbors = {}
     local p1 = cell.Position
-    local size = cell.Size.X
-    local maxDist = size * 1.5
+    local maxDist = cell.Size.X * 1.5
     
     for i = 1, #walkableCells do
         local other = walkableCells[i]
-        if other == cell then continue end
-        
-        local p2 = other.Position
-        local dx = math.abs(p1.X - p2.X)
-        local dz = math.abs(p1.Z - p2.Z)
-        
-        if dx > maxDist or dz > maxDist then continue end
-        
-        local alignedX = dx < 1
-        local alignedZ = dz < 1
-        
-        if not alignedX and not alignedZ then continue end
-        
-        local dist = math.sqrt(dx*dx + dz*dz)
-        if dist < maxDist and dist > 0.1 then
-            neighbors[#neighbors + 1] = other
+        if other ~= cell then
+            local p2 = other.Position
+            local dx, dz = mathAbs(p1.X - p2.X), mathAbs(p1.Z - p2.Z)
+            
+            if dx <= maxDist and dz <= maxDist and (dx < 1 or dz < 1) then
+                local dist = mathSqrt(dx*dx + dz*dz)
+                if dist < maxDist and dist > 0.1 then
+                    neighbors[#neighbors + 1] = other
+                end
+            end
         end
     end
     return neighbors
@@ -287,62 +274,45 @@ local function findPathAStar(startCell, targetCell, walkableCells, walkableSet)
     local gScore = {[startCell] = 0}
     local fScore = {[startCell] = (startCell.Position - targetCell.Position).Magnitude}
     
-    local iterations = 0
-    
-    while #openList > 0 and iterations < 500 do
-        iterations = iterations + 1
+    for iter = 1, 500 do
+        if #openList == 0 then break end
         
-        local current = nil
-        local currentIdx = 0
-        local lowestF = math.huge
+        local current, currentIdx, lowestF = nil, 0, mathHuge
         
         for i = 1, #openList do
             local node = openList[i]
-            local f = fScore[node] or math.huge
+            local f = fScore[node] or mathHuge
             if f < lowestF then
-                lowestF = f
-                current = node
-                currentIdx = i
+                lowestF, current, currentIdx = f, node, i
             end
         end
         
         if current == targetCell then
-            local path = {}
-            local node = current
+            local path, node = {}, current
             while node do
-                table.insert(path, 1, node)
+                tableInsert(path, 1, node)
                 node = cameFrom[node]
             end
             return path
         end
         
-        table.remove(openList, currentIdx)
+        tableRemove(openList, currentIdx)
         closedSet[current] = true
         
-        local neighbors = getPathNeighbors(current, walkableCells, walkableSet)
-        
-        for i = 1, #neighbors do
-            local neighbor = neighbors[i]
-            if closedSet[neighbor] then continue end
-            if not walkableSet[neighbor] then continue end
-            
-            local moveCost = (current.Position - neighbor.Position).Magnitude
-            local tentativeG = (gScore[current] or math.huge) + moveCost
-            
-            if tentativeG < (gScore[neighbor] or math.huge) then
-                cameFrom[neighbor] = current
-                gScore[neighbor] = tentativeG
-                fScore[neighbor] = tentativeG + (neighbor.Position - targetCell.Position).Magnitude
+        for _, neighbor in ipairs(getPathNeighbors(current, walkableCells, walkableSet)) do
+            if not closedSet[neighbor] and walkableSet[neighbor] then
+                local tentativeG = (gScore[current] or mathHuge) + (current.Position - neighbor.Position).Magnitude
                 
-                local inOpen = false
-                for j = 1, #openList do
-                    if openList[j] == neighbor then 
-                        inOpen = true 
-                        break 
+                if tentativeG < (gScore[neighbor] or mathHuge) then
+                    cameFrom[neighbor] = current
+                    gScore[neighbor] = tentativeG
+                    fScore[neighbor] = tentativeG + (neighbor.Position - targetCell.Position).Magnitude
+                    
+                    local inOpen = false
+                    for j = 1, #openList do
+                        if openList[j] == neighbor then inOpen = true break end
                     end
-                end
-                if not inOpen then
-                    openList[#openList + 1] = neighbor
+                    if not inOpen then openList[#openList + 1] = neighbor end
                 end
             end
         end
@@ -352,15 +322,13 @@ local function findPathAStar(startCell, targetCell, walkableCells, walkableSet)
 end
 
 local function findClosestWalkableCell(position, cells)
-    local closest = nil
-    local closestDist = math.huge
+    local closest, closestDist = nil, mathHuge
     for i = 1, #cells do
         local cell = cells[i]
         local diff = cell.Position - position
         local dist = diff.X*diff.X + diff.Z*diff.Z
         if dist < closestDist then
-            closestDist = dist
-            closest = cell
+            closestDist, closest = dist, cell
         end
     end
     return closest
@@ -378,9 +346,7 @@ local function getAllSafeTargets()
     end
     
     local targets = {}
-    local children = folder:GetChildren()
-    for i = 1, #children do
-        local cell = children[i]
+    for _, cell in ipairs(folder:GetChildren()) do
         if isSafeMarked(cell) and not isCellOpen(cell) then
             targets[#targets + 1] = cell
         end
@@ -396,19 +362,15 @@ local function findBestTarget(rootPos, walkableCells, walkableSet)
     local startCell = findClosestWalkableCell(rootPos, walkableCells)
     if not startCell then return nil, nil end
     
-    table.sort(targets, function(a, b)
-        local da = (a.Position - rootPos).Magnitude
-        local db = (b.Position - rootPos).Magnitude
-        return da < db
+    tableSort(targets, function(a, b)
+        return (a.Position - rootPos).Magnitude < (b.Position - rootPos).Magnitude
     end)
     
-    for i = 1, math.min(#targets, 5) do
+    for i = 1, mathMin(#targets, 5) do
         local target = targets[i]
         if walkableSet[target] then
             local path = findPathAStar(startCell, target, walkableCells, walkableSet)
-            if path and #path <= 15 then
-                return target, path
-            end
+            if path and #path <= 15 then return target, path end
         end
     end
     
@@ -428,20 +390,11 @@ local function walkPath(path, targetCell)
     
     local h = settings.humanization
     local baseSpeed = 16
-    
     humanoid.WalkSpeed = baseSpeed
     
-    if h > 0.01 then
-        task.wait(0.05 * h + math.random() * 0.15 * h)
-    end
+    if h > 0.01 then task.wait(0.05 * h + mathRandom() * 0.15 * h) end
     
-    local startIdx = 1
-    if #path > 1 then
-        local distToFirst = (root.Position - path[1].Position).Magnitude
-        if distToFirst < 2 then
-            startIdx = 2
-        end
-    end
+    local startIdx = (#path > 1 and (root.Position - path[1].Position).Magnitude < 2) and 2 or 1
     
     for i = startIdx, #path do
         if stopCurrentExecution or not settings.isLegitActive or not settings.pathfindingEnabled then
@@ -455,22 +408,17 @@ local function walkPath(path, targetCell)
         local isLast = (i == #path)
         
         if h > 0.01 then
-            local speedVariation = (math.random() - 0.5) * 6 * h
-            humanoid.WalkSpeed = math.clamp(baseSpeed + speedVariation, 12, 20)
+            humanoid.WalkSpeed = mathClamp(baseSpeed + (mathRandom() - 0.5) * 6 * h, 12, 20)
         end
         
         local targetPos = cell.Position
-        humanoid:MoveTo(targetPos)
-        
-        local acceptRadius = 1.0 + h * 1.5
-        if isLast then
-            acceptRadius = 0.8 + h * 0.7
-        end
-        
-        local timeout = 3
+        local acceptRadius = isLast and (0.8 + h * 0.7) or (1.0 + h * 1.5)
+        local acceptRadiusSq = acceptRadius * acceptRadius
         local startTime = tick()
         
-        while tick() - startTime < timeout do
+        humanoid:MoveTo(targetPos)
+        
+        while tick() - startTime < 3 do
             if stopCurrentExecution or not settings.isLegitActive or not settings.pathfindingEnabled then
                 humanoid.WalkSpeed = baseSpeed
                 isWalking = false
@@ -479,26 +427,17 @@ local function walkPath(path, targetCell)
             end
             
             local rootPos = root.Position
-            local dx = rootPos.X - targetPos.X
-            local dz = rootPos.Z - targetPos.Z
-            local distSq = dx*dx + dz*dz
-            
-            if distSq < acceptRadius * acceptRadius then
-                break
-            end
+            local dx, dz = rootPos.X - targetPos.X, rootPos.Z - targetPos.Z
+            if dx*dx + dz*dz < acceptRadiusSq then break end
             
             humanoid:MoveTo(targetPos)
             RunService.Heartbeat:Wait()
         end
         
-        if h > 0.01 and not isLast then
-            task.wait(0.02 * h + math.random() * 0.05 * h)
-        end
+        if h > 0.01 and not isLast then task.wait(0.02 * h + mathRandom() * 0.05 * h) end
     end
     
-    if h > 0.01 then
-        task.wait(0.03 * h + math.random() * 0.1 * h)
-    end
+    if h > 0.01 then task.wait(0.03 * h + mathRandom() * 0.1 * h) end
     
     humanoid.WalkSpeed = baseSpeed
     isWalking = false
@@ -517,11 +456,7 @@ local function doPathfinding()
     if #walkableCells == 0 then return end
     
     local target, path = findBestTarget(root.Position, walkableCells, walkableSet)
-    if not target or not path then return end
-    
-    task.spawn(function()
-        walkPath(path, target)
-    end)
+    if target and path then task.spawn(walkPath, path, target) end
 end
 
 local function teleportTo(target)
@@ -529,34 +464,20 @@ local function teleportTo(target)
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root then return end
-    if not stopCurrentExecution and settings.freezeEnabled and settings.currentTab == "rage" then
+    
+    local newCFrame = target.CFrame * CFrame.new(0, 5, 0)
+    
+    if settings.freezeEnabled and settings.currentTab == "rage" then
         for _, p in ipairs(char:GetDescendants()) do 
             if p:IsA("BasePart") then p.Anchored = false end 
         end
-        root.CFrame = target.CFrame * CFrame.new(0, 5, 0)
+        root.CFrame = newCFrame
         root.Velocity = Vector3.new(0, -100, 0)
         task.wait(0.01)
         updatePhysics()
-    elseif not stopCurrentExecution then
-        root.CFrame = target.CFrame * CFrame.new(0, 5, 0)
+    else
+        root.CFrame = newCFrame
     end
-end
-
-local function getSolverNeighbors(cell, allParts)
-    local cached = solverNeighborCache[cell]
-    if cached then return cached end
-    
-    local nbs = {}
-    local pos = cell.Position
-    local dist = cell.Size.X * 1.8
-    for i = 1, #allParts do
-        local n = allParts[i]
-        if n ~= cell and (n.Position - pos).Magnitude < dist then 
-            nbs[#nbs + 1] = n
-        end
-    end
-    solverNeighborCache[cell] = nbs
-    return nbs
 end
 
 local function getSolverData()
@@ -565,6 +486,7 @@ local function getSolverData()
     
     local numberData = {}
     local allParts = folder:GetChildren()
+    local cellSize = allParts[1] and allParts[1].Size.X * 1.8 or 5
     
     for _, cell in ipairs(allParts) do
         if not isCellOpen(cell) then continue end
@@ -574,80 +496,165 @@ local function getSolverData()
         local label = gui:FindFirstChildOfClass("TextLabel")
         local val = label and tonumber(label.Text) or 0
         
-        if not solverNeighborCache[cell] then
-            local nbs = {}
+        local cached = solverNeighborCache[cell]
+        if not cached then
+            cached = {}
+            local pos = cell.Position
             for _, n in ipairs(allParts) do 
-                if n ~= cell and (n.Position - cell.Position).Magnitude < (cell.Size.X * 1.8) then 
-                    table.insert(nbs, n) 
+                if n ~= cell and (n.Position - pos).Magnitude < cellSize then 
+                    cached[#cached + 1] = n
                 end 
             end
-            solverNeighborCache[cell] = nbs
+            solverNeighborCache[cell] = cached
         end
         
         local hidden, mines = {}, 0
-        for _, n in ipairs(solverNeighborCache[cell]) do
+        for _, n in ipairs(cached) do
             if not isCellOpen(n) then
                 if n.Color == COLOR_BLACK then 
                     mines = mines + 1 
                 else 
-                    table.insert(hidden, n) 
+                    hidden[#hidden + 1] = n
                 end
             end
         end
         
         if #hidden > 0 or val == 0 then 
-            table.insert(numberData, {obj = cell, eVal = val - mines, hidden = hidden}) 
+            numberData[#numberData + 1] = {obj = cell, eVal = val - mines, hidden = hidden}
         end
     end
     
     return numberData
 end
 
+local function getNeighborCount(cell, allParts)
+    local count = 0
+    local pos = cell.Position
+    local dist = cell.Size.X * 1.8
+    for i = 1, #allParts do
+        if allParts[i] ~= cell and (allParts[i].Position - pos).Magnitude < dist then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function findBestGuess(data, allParts)
+    local cellData = {}
+    
+    for _, d in ipairs(data) do
+        if #d.hidden > 0 then
+            local localProb = d.eVal > 0 and mathMin(1, d.eVal / #d.hidden) or 0
+            
+            for _, cell in ipairs(d.hidden) do
+                if cell.Color ~= COLOR_BLACK then
+                    local cd = cellData[cell]
+                    if not cd then
+                        cd = {maxProb = 0, minProb = 1, sumProb = 0, count = 0, neighborCount = getNeighborCount(cell, allParts)}
+                        cellData[cell] = cd
+                    end
+                    cd.maxProb = mathMax(cd.maxProb, localProb)
+                    cd.minProb = mathMin(cd.minProb, localProb)
+                    cd.sumProb = cd.sumProb + localProb
+                    cd.count = cd.count + 1
+                end
+            end
+        end
+    end
+    
+    local candidates = {}
+    for cell, cd in pairs(cellData) do
+        if cell.Color ~= COLOR_BLACK and not guessHistory[cell] then
+            local avgProb = cd.count > 0 and (cd.sumProb / cd.count) or 0.5
+            local risk = cd.maxProb * 0.5 + avgProb * 0.3 + cd.minProb * 0.2
+            local edgeBonus = cd.neighborCount <= 3 and -0.15 or (cd.neighborCount <= 5 and -0.08 or 0)
+            
+            candidates[#candidates + 1] = {
+                cell = cell,
+                score = risk + edgeBonus - mathMin(cd.count * 0.02, 0.1),
+                neighbors = cd.neighborCount,
+                constraints = cd.count
+            }
+        end
+    end
+    
+    if #candidates == 0 then
+        local folder = getPartsFolder()
+        if folder then
+            for _, cell in ipairs(folder:GetChildren()) do
+                if not isCellOpen(cell) and cell.Color ~= COLOR_BLACK and not cellData[cell] and not guessHistory[cell] then
+                    local nc = getNeighborCount(cell, allParts)
+                    candidates[#candidates + 1] = {
+                        cell = cell,
+                        score = nc <= 3 and 0.25 or (nc <= 5 and 0.35 or 0.5),
+                        neighbors = nc,
+                        constraints = 0
+                    }
+                end
+            end
+        end
+    end
+    
+    if #candidates == 0 then return nil end
+    
+    tableSort(candidates, function(a, b)
+        if mathAbs(a.score - b.score) < 0.01 then
+            return a.neighbors ~= b.neighbors and a.neighbors < b.neighbors or a.constraints > b.constraints
+        end
+        return a.score < b.score
+    end)
+    
+    return candidates[mathRandom(1, mathMin(3, #candidates))].cell
+end
+
 local function solve()
     if stopCurrentExecution then return end
-    if settings.currentTab == "legit" and settings.isLegitActive then
-        if tick() - lastCalcTime < settings.calculateDelay then return end
-    end
+    if settings.currentTab == "legit" and settings.isLegitActive and tick() - lastCalcTime < settings.calculateDelay then return end
     if (not settings.isAutoSolving and not settings.isLegitActive) or settings.isWaitingForRound then return end
     lastCalcTime = tick()
     
     local data = getSolverData()
-    local safeQueue, mineQueue, riskyCells = {}, {}, {}
+    local safeQueue, mineQueue = {}, {}
     local foundAnything = false
+    local dataLen = #data
 
-    for i = 1, #data do
-        for j = 1, #data do
+    for i = 1, dataLen do
+        local d1 = data[i]
+        local pos1 = d1.obj.Position
+        for j = 1, dataLen do
             if i ~= j then
-                local d1, d2 = data[i], data[j]
-                if (d1.obj.Position - d2.obj.Position).Magnitude < 12 then
+                local d2 = data[j]
+                if (pos1 - d2.obj.Position).Magnitude < 12 then
                     local s1, s2 = d1.hidden, d2.hidden
-                    local isSubset = true
-                    for _, x in ipairs(s1) do
-                        local found = false
-                        for _, y in ipairs(s2) do 
-                            if x == y then found = true; break end 
-                        end
-                        if not found then isSubset = false; break end
-                    end
-                    if isSubset and #s2 > #s1 then
-                        local diffMines = d2.eVal - d1.eVal
-                        local diffCells = {}
-                        for _, x in ipairs(s2) do
-                            local inS1 = false
-                            for _, y in ipairs(s1) do 
-                                if x == y then inS1 = true; break end 
+                    local s1Len, s2Len = #s1, #s2
+                    
+                    if s2Len > s1Len then
+                        local isSubset = true
+                        for k = 1, s1Len do
+                            local found = false
+                            for l = 1, s2Len do 
+                                if s1[k] == s2[l] then found = true break end 
                             end
-                            if not inS1 then table.insert(diffCells, x) end
+                            if not found then isSubset = false break end
                         end
-                        if diffMines == 0 then
-                            for _, n in ipairs(diffCells) do 
-                                table.insert(safeQueue, n)
-                                foundAnything = true 
+                        
+                        if isSubset then
+                            local diffMines = d2.eVal - d1.eVal
+                            local diffCells = {}
+                            for k = 1, s2Len do
+                                local inS1 = false
+                                for l = 1, s1Len do 
+                                    if s2[k] == s1[l] then inS1 = true break end 
+                                end
+                                if not inS1 then diffCells[#diffCells + 1] = s2[k] end
                             end
-                        elseif diffMines == #diffCells then
-                            for _, n in ipairs(diffCells) do 
-                                table.insert(mineQueue, n)
-                                foundAnything = true 
+                            
+                            if diffMines == 0 then
+                                for k = 1, #diffCells do safeQueue[#safeQueue + 1] = diffCells[k] end
+                                foundAnything = true
+                            elseif diffMines == #diffCells then
+                                for k = 1, #diffCells do mineQueue[#mineQueue + 1] = diffCells[k] end
+                                foundAnything = true
                             end
                         end
                     end
@@ -657,51 +664,54 @@ local function solve()
     end
 
     local basicSafe, basicMines = {}, {}
-    for _, d in ipairs(data) do
-        if #d.hidden > 0 then
-            if #d.hidden == d.eVal then
-                for _, n in ipairs(d.hidden) do 
-                    table.insert(basicMines, n)
-                    foundAnything = true 
-                end
+    for i = 1, dataLen do
+        local d = data[i]
+        local hiddenLen = #d.hidden
+        if hiddenLen > 0 then
+            if hiddenLen == d.eVal then
+                for j = 1, hiddenLen do basicMines[#basicMines + 1] = d.hidden[j] end
+                foundAnything = true
             elseif d.eVal <= 0 then
-                for _, n in ipairs(d.hidden) do 
-                    table.insert(basicSafe, n)
-                    foundAnything = true 
-                end
+                for j = 1, hiddenLen do basicSafe[#basicSafe + 1] = d.hidden[j] end
+                foundAnything = true
             end
         end
     end
 
     if settings.currentTab == "rage" and settings.isAutoSolving then
-        for _, m in ipairs(mineQueue) do m.Color = COLOR_BLACK end
-        for _, m in ipairs(basicMines) do m.Color = COLOR_BLACK end
+        for i = 1, #mineQueue do mineQueue[i].Color = COLOR_BLACK end
+        for i = 1, #basicMines do basicMines[i].Color = COLOR_BLACK end
+        
         local targetQueue = #safeQueue > 0 and safeQueue or basicSafe
         if #targetQueue > 0 then
             isGuessing = false
-            for _, s in ipairs(targetQueue) do 
+            consecutiveGuesses = 0
+            guessHistory = {}
+            for i = 1, #targetQueue do 
                 if stopCurrentExecution or not settings.isAutoSolving then break end 
+                local s = targetQueue[i]
                 if not isCellOpen(s) then 
                     teleportTo(s)
                     task.wait(settings.actionDelay) 
                 end
             end
-        elseif settings.autoGuess and not foundAnything and tick() - lastActionTime > 0.8 then
-            for _, d in ipairs(data) do 
-                for _, n in ipairs(d.hidden) do 
-                    if n.Color ~= COLOR_BLACK then 
-                        riskyCells[n] = (riskyCells[n] or 0) + 1 
-                    end 
-                end 
-            end
-            local best, maxW = nil, -1
-            for c, w in pairs(riskyCells) do 
-                if w > maxW then maxW = w; best = c end 
-            end
-            if best then 
+        elseif settings.autoGuess and not foundAnything and tick() - lastActionTime > 0.5 then
+            local folder = getPartsFolder()
+            local allParts = folder and folder:GetChildren() or {}
+            local bestGuess = findBestGuess(data, allParts)
+            
+            if bestGuess then
                 isGuessing = true
-                teleportTo(best)
-                lastActionTime = tick() 
+                consecutiveGuesses = consecutiveGuesses + 1
+                guessHistory[bestGuess] = true
+                
+                if consecutiveGuesses > 10 then
+                    guessHistory = {}
+                    consecutiveGuesses = 0
+                end
+                
+                teleportTo(bestGuess)
+                lastActionTime = tick()
             end
         end
         
@@ -709,12 +719,10 @@ local function solve()
         local finalMines = #mineQueue > 0 and mineQueue or basicMines
         local finalSafe = #safeQueue > 0 and safeQueue or basicSafe
         
-        for _, m in ipairs(finalMines) do 
-            m.Color = COLOR_BLACK
-        end
-        for _, s in ipairs(finalSafe) do 
-            s.Color = COLOR_WHITE
-            highlightCache[s] = "safe"
+        for i = 1, #finalMines do finalMines[i].Color = COLOR_BLACK end
+        for i = 1, #finalSafe do 
+            finalSafe[i].Color = COLOR_WHITE
+            highlightCache[finalSafe[i]] = "safe"
         end
     end
 end
@@ -722,7 +730,7 @@ end
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "AutosolverUI"
 screenGui.ResetOnSpawn = false
-screenGui.Parent = getSafeParent()
+screenGui.Parent = playerGui
 
 local mainFrame = Instance.new("Frame", screenGui)
 mainFrame.Name = "MainFrame"
@@ -792,7 +800,7 @@ local function createTabBtn(name, active)
     btn.BackgroundColor3 = active and settings.bgColor or settings.secColor
     btn.Text = name
     btn.Font = Enum.Font.GothamBold
-    btn.TextColor3 = active and settings.accentColor or Color3.fromRGB(150, 150, 150)
+    btn.TextColor3 = active and settings.accentColor or COLOR_INACTIVE
     btn.TextSize = 12
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
     return btn
@@ -845,9 +853,9 @@ local function updateStatus()
         statusBtn.TextColor3 = Color3.fromRGB(100, 200, 255)
         statusBtn.BackgroundColor3 = Color3.fromRGB(30, 40, 50)
     elseif active then
-        statusBtn.Text = "ACTIVE - " .. string.upper(settings.currentTab)
-        statusBtn.TextColor3 = Color3.fromRGB(100, 255, 100)
-        statusBtn.BackgroundColor3 = Color3.fromRGB(30, 50, 30)
+        statusBtn.Text = isGuessing and "ACTIVE - " .. string.upper(settings.currentTab) .. " [GUESSING]" or "ACTIVE - " .. string.upper(settings.currentTab)
+        statusBtn.TextColor3 = isGuessing and Color3.fromRGB(255, 200, 100) or Color3.fromRGB(100, 255, 100)
+        statusBtn.BackgroundColor3 = isGuessing and Color3.fromRGB(50, 40, 30) or Color3.fromRGB(30, 50, 30)
     else
         statusBtn.Text = "STATUS: OFF"
         statusBtn.TextColor3 = Color3.fromRGB(200, 80, 80)
@@ -880,26 +888,26 @@ local function createToggle(parent, text, yPos, value, callback)
     lbl.BackgroundTransparency = 1
     lbl.Text = text
     lbl.Font = Enum.Font.GothamSemibold
-    lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    lbl.TextColor3 = COLOR_TEXT
     lbl.TextSize = 13
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     
     local toggle = Instance.new("TextButton", frame)
     toggle.Size = UDim2.new(0, 44, 0, 22)
     toggle.Position = UDim2.new(1, -50, 0.5, -11)
-    toggle.BackgroundColor3 = value and settings.accentColor or Color3.fromRGB(45, 45, 50)
+    toggle.BackgroundColor3 = value and settings.accentColor or COLOR_GRAY
     toggle.Text = ""
     Instance.new("UICorner", toggle).CornerRadius = UDim.new(1, 0)
     
     local circle = Instance.new("Frame", toggle)
     circle.Size = UDim2.new(0, 18, 0, 18)
     circle.Position = value and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)
-    circle.BackgroundColor3 = Color3.new(1, 1, 1)
+    circle.BackgroundColor3 = COLOR_WHITE
     Instance.new("UICorner", circle).CornerRadius = UDim.new(1, 0)
     
     toggle.MouseButton1Click:Connect(function()
         value = not value
-        TweenService:Create(toggle, TweenInfo.new(0.15), {BackgroundColor3 = value and settings.accentColor or Color3.fromRGB(45, 45, 50)}):Play()
+        TweenService:Create(toggle, TweenInfo.new(0.15), {BackgroundColor3 = value and settings.accentColor or COLOR_GRAY}):Play()
         TweenService:Create(circle, TweenInfo.new(0.15), {Position = value and UDim2.new(1, -20, 0.5, -9) or UDim2.new(0, 2, 0.5, -9)}):Play()
         callback(value)
     end)
@@ -916,7 +924,7 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     lbl.BackgroundTransparency = 1
     lbl.Text = text
     lbl.Font = Enum.Font.GothamSemibold
-    lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    lbl.TextColor3 = COLOR_TEXT
     lbl.TextSize = 12
     lbl.TextXAlignment = Enum.TextXAlignment.Left
     
@@ -926,7 +934,7 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     inputBox.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
     inputBox.Text = tostring(default)
     inputBox.Font = Enum.Font.Code
-    inputBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+    inputBox.TextColor3 = COLOR_TEXT
     inputBox.TextSize = 11
     inputBox.ClearTextOnFocus = false
     Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
@@ -934,7 +942,7 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     local bar = Instance.new("Frame", frame)
     bar.Size = UDim2.new(1, 0, 0, 4)
     bar.Position = UDim2.new(0, 0, 0, 28)
-    bar.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    bar.BackgroundColor3 = COLOR_GRAY
     Instance.new("UICorner", bar).CornerRadius = UDim.new(1, 0)
     
     local fill = Instance.new("Frame", bar)
@@ -942,11 +950,10 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     fill.BackgroundColor3 = settings.accentColor
     Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
     
-    local currentValue = default
+    local currentValue, dragging = default, false
     
     local function updateValue(val)
-        val = math.clamp(val, min, max)
-        val = math.floor(val * 100) / 100
+        val = mathFloor(mathClamp(val, min, max) * 100) / 100
         currentValue = val
         fill.Size = UDim2.new((val - min) / (max - min), 0, 1, 0)
         inputBox.Text = tostring(val)
@@ -955,28 +962,23 @@ local function createSlider(parent, text, yPos, min, max, default, callback)
     
     inputBox.FocusLost:Connect(function()
         local num = tonumber(inputBox.Text)
-        if num then
-            updateValue(num)
-        else
-            inputBox.Text = tostring(currentValue)
-        end
+        if num then updateValue(num) else inputBox.Text = tostring(currentValue) end
     end)
     
-    local dragging = false
     bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then 
             dragging = true 
-            local rel = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-            updateValue(min + (max - min) * rel)
+            updateValue(min + (max - min) * mathClamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1))
         end
     end)
+    
     UserInputService.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
     end)
+    
     UserInputService.InputChanged:Connect(function(input)
         if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local rel = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
-            updateValue(min + (max - min) * rel)
+            updateValue(min + (max - min) * mathClamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1))
         end
     end)
 end
@@ -988,25 +990,26 @@ createSlider(ragePage, "Teleport Delay", 90, 0.04, 1, settings.actionDelay, func
 createSlider(legitPage, "Calculation Delay", 10, 0.1, 5, settings.calculateDelay, function(v) settings.calculateDelay = v end)
 createToggle(legitPage, "Auto Walk", 65, settings.pathfindingEnabled, function(v) 
     settings.pathfindingEnabled = v 
-    if not v then 
-        isWalking = false 
-        clearVisuals()
-    end
+    if not v then isWalking = false clearVisuals() end
 end)
 createSlider(legitPage, "Humanization", 110, 0, 1, settings.humanization, function(v) settings.humanization = v end)
 
 createSlider(settingsPage, "Start Delay", 10, 0, 30, settings.startDelayTime, function(v) settings.startDelayTime = v end)
 
 local function updateTabs()
-    btnRage.BackgroundColor3 = settings.currentTab == "rage" and settings.bgColor or settings.secColor
-    btnRage.TextColor3 = settings.currentTab == "rage" and settings.accentColor or Color3.fromRGB(150, 150, 150)
-    btnLegit.BackgroundColor3 = settings.currentTab == "legit" and settings.bgColor or settings.secColor
-    btnLegit.TextColor3 = settings.currentTab == "legit" and settings.accentColor or Color3.fromRGB(150, 150, 150)
-    btnSettings.BackgroundColor3 = settings.currentTab == "settings" and settings.bgColor or settings.secColor
-    btnSettings.TextColor3 = settings.currentTab == "settings" and settings.accentColor or Color3.fromRGB(150, 150, 150)
-    ragePage.Visible = settings.currentTab == "rage"
-    legitPage.Visible = settings.currentTab == "legit"
-    settingsPage.Visible = settings.currentTab == "settings"
+    local tabs = {rage = btnRage, legit = btnLegit, settings = btnSettings}
+    local pages = {rage = ragePage, legit = legitPage, settings = settingsPage}
+    
+    for name, btn in pairs(tabs) do
+        local active = settings.currentTab == name
+        btn.BackgroundColor3 = active and settings.bgColor or settings.secColor
+        btn.TextColor3 = active and settings.accentColor or COLOR_INACTIVE
+    end
+    
+    for name, page in pairs(pages) do
+        page.Visible = settings.currentTab == name
+    end
+    
     statusBtn.Visible = settings.currentTab ~= "settings"
 end
 
@@ -1050,7 +1053,6 @@ player.CharacterAdded:Connect(function()
     end
 end)
 
-local lastStatusTime = 0
 task.spawn(function()
     while true do
         pcall(solve)
