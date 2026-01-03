@@ -2,11 +2,7 @@ local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
-local MY_NAME = "CRISTIAN2012q"
-local FRIEND_NAME = "GAMER_Cyber88"
-
-if LocalPlayer.Name ~= MY_NAME then
-	script:Destroy()
+if LocalPlayer.Name ~= "CRISTIAN2012q" then
 	return
 end
 
@@ -14,80 +10,36 @@ local Folder = Workspace:WaitForChild("Presents", 10)
 if not Folder then return end
 
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoTP_GUI"
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
 
 local Button = Instance.new("TextButton")
-Button.Name = "ToggleBtn"
-Button.Parent = ScreenGui
-Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-Button.Position = UDim2.new(0, 10, 0.5, 0)
 Button.Size = UDim2.new(0, 160, 0, 50)
-Button.Font = Enum.Font.SourceSansBold
-Button.TextSize = 18
+Button.Position = UDim2.new(0, 10, 0.5, -25)
+Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
 Button.Text = "TP: OFF"
 Button.TextColor3 = Color3.new(1, 1, 1)
+Button.Font = Enum.Font.GothamBold
+Button.TextSize = 20
+Button.Parent = ScreenGui
 
 local Corner = Instance.new("UICorner")
-Corner.CornerRadius = UDim.new(0, 8)
+Corner.CornerRadius = UDim.new(0, 12)
 Corner.Parent = Button
 
 local Enabled = false
-local IsSafe = false
-
-local function UpdateSafety()
-	local count = #Players:GetPlayers()
-	local friend = Players:FindFirstChild(FRIEND_NAME)
-	
-	if count > 2 then
-		IsSafe = false
-		Button.Text = "BLOCKED (>2 Players)"
-	elseif not friend then
-		IsSafe = false
-		Button.Text = "BLOCKED (No Gamer)"
-	else
-		IsSafe = true
-	end
-
-	if not IsSafe then
-		Enabled = false
-		Button.Active = false
-		Button.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
-	else
-		Button.Active = true
-		if Enabled then
-			Button.BackgroundColor3 = Color3.fromRGB(0, 200, 0)
-			Button.Text = "TP: ON"
-		else
-			Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
-			Button.Text = "TP: OFF"
-		end
-	end
-end
 
 Button.MouseButton1Click:Connect(function()
-	if not IsSafe then return end
 	Enabled = not Enabled
-	UpdateSafety()
+	Button.BackgroundColor3 = Enabled and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(255, 0, 0)
+	Button.Text = Enabled and "TP: ON" or "TP: OFF"
 end)
 
 Folder.ChildAdded:Connect(function(child)
 	if not Enabled then return end
-	task.wait(0.1)
-	
-	local Char = LocalPlayer.Character
-	local HRP = Char and Char:FindFirstChild("HumanoidRootPart")
-	
+	local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+	local HRP = Character:FindFirstChild("HumanoidRootPart")
 	if HRP and child then
-		local targetCF = child:GetPivot()
-		if targetCF then
-			HRP.CFrame = targetCF + Vector3.new(0, 3, 0)
-		end
+		HRP.CFrame = child:GetPivot() + Vector3.new(0, 4, 0)
 	end
 end)
-
-Players.PlayerAdded:Connect(UpdateSafety)
-Players.PlayerRemoving:Connect(UpdateSafety)
-
-UpdateSafety()
