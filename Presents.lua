@@ -10,22 +10,24 @@ local Folder = Workspace:WaitForChild("Presents", 10)
 if not Folder then return end
 
 local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "TPGui"
 ScreenGui.ResetOnSpawn = false
-ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.Parent = gethui and gethui() or LocalPlayer:WaitForChild("PlayerGui")
 
 local Button = Instance.new("TextButton")
 Button.Size = UDim2.new(0, 160, 0, 50)
-Button.Position = UDim2.new(0, 10, 0.5, -25)
+Button.Position = UDim2.new(0, 15, 0.5, -25)
+Button.AnchorPoint = Vector2.new(0, 0.5)
 Button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
 Button.Text = "TP: OFF"
 Button.TextColor3 = Color3.new(1, 1, 1)
 Button.Font = Enum.Font.GothamBold
-Button.TextSize = 20
+Button.TextSize = 24
+Button.AutoButtonColor = false
 Button.Parent = ScreenGui
 
-local Corner = Instance.new("UICorner")
-Corner.CornerRadius = UDim.new(0, 12)
-Corner.Parent = Button
+Instance.new("UICorner", Button).CornerRadius = UDim.new(0, 12)
 
 local Enabled = false
 
@@ -39,7 +41,11 @@ Folder.ChildAdded:Connect(function(child)
 	if not Enabled then return end
 	local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 	local HRP = Character:FindFirstChild("HumanoidRootPart")
-	if HRP and child then
-		HRP.CFrame = child:GetPivot() + Vector3.new(0, 4, 0)
+	if not HRP then return end
+	task.wait(0.1)
+	if child and child:IsA("BasePart") then
+		HRP.CFrame = child.CFrame + Vector3.new(0, 5, 0)
+	elseif child:IsA("Model") and child.PrimaryPart then
+		HRP.CFrame = child:GetPrimaryPartCFrame() + Vector3.new(0, 5, 0)
 	end
 end)
