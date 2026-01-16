@@ -107,7 +107,7 @@ local MainFrame = Instance.new("Frame")
 MainFrame.Parent = ScreenGui
 MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
 MainFrame.Position = UDim2.new(0, 10, 0.2, 0)
-MainFrame.Size = UDim2.new(0, 230, 0, 320)
+MainFrame.Size = UDim2.new(0, 250, 0, 340)
 MainFrame.Visible = false
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
 local ms = Instance.new("UIStroke", MainFrame)
@@ -173,18 +173,18 @@ local StatsLabel = Instance.new("TextLabel")
 StatsLabel.Parent = MainFrame
 StatsLabel.BackgroundTransparency = 1
 StatsLabel.Position = UDim2.new(0.05, 0, 0, 85)
-StatsLabel.Size = UDim2.new(0.9, 0, 0, 50)
+StatsLabel.Size = UDim2.new(0.9, 0, 0, 70)
 StatsLabel.Font = Enum.Font.Gotham
 StatsLabel.TextSize = 12
 StatsLabel.TextColor3 = Color3.new(1, 1, 1)
 StatsLabel.TextWrapped = true
 StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatsLabel.Text = "📦 Collected: 0\n🎰 Chance: 0.00% | ⏳ ~1000"
+StatsLabel.Text = "📦 Collected: 0\n🥤 Sprite Cranberry chance: 0.00%\n⏳ Remaining to avg: ~1000"
 
 local GiftsTitle = Instance.new("TextLabel")
 GiftsTitle.Parent = MainFrame
 GiftsTitle.BackgroundTransparency = 1
-GiftsTitle.Position = UDim2.new(0.05, 0, 0, 140)
+GiftsTitle.Position = UDim2.new(0.05, 0, 0, 160)
 GiftsTitle.Size = UDim2.new(0.9, 0, 0, 20)
 GiftsTitle.Font = Enum.Font.GothamBold
 GiftsTitle.TextSize = 13
@@ -195,7 +195,7 @@ GiftsTitle.Text = "🎁 Last 3 Gifts:"
 local GiftContainer = Instance.new("Frame")
 GiftContainer.Parent = MainFrame
 GiftContainer.BackgroundTransparency = 1
-GiftContainer.Position = UDim2.new(0.05, 0, 0, 165)
+GiftContainer.Position = UDim2.new(0.05, 0, 0, 185)
 GiftContainer.Size = UDim2.new(0.9, 0, 0, 145)
 
 local GiftFrames = {}
@@ -269,7 +269,6 @@ local function SetupViewportCamera(vpf, cam, model)
     
     clone:PivotTo(CFrame.new(0, 0, 0))
     
-    cf = CFrame.new(0, 0, 0)
     local maxSize = math.max(size.X, size.Y, size.Z)
     local distance = maxSize * 2
     
@@ -279,7 +278,12 @@ end
 local function UpdateUI()
     local chance = 1 - (0.999 ^ TotalGifts)
     local remaining = math.max(0, 1000 - TotalGifts)
-    StatsLabel.Text = string.format("📦 Collected: %d\n🎰 Chance: %.2f%% | ⏳ ~%d", TotalGifts, chance * 100, remaining)
+    StatsLabel.Text = string.format(
+        "📦 Collected: %d\n🥤 Sprite Cranberry chance: %.2f%%\n⏳ Remaining to avg: ~%d",
+        TotalGifts,
+        chance * 100,
+        remaining
+    )
     
     local colors = {"🟢", "🟡", "🔴"}
     for i = 1, 3 do
