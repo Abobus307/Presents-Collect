@@ -1,3 +1,5 @@
+print("Worked")
+
 if _G.AutoTP_Running then
     _G.AutoTP_Running = false
     task.wait(0.2)
@@ -206,6 +208,7 @@ for i = 1, 3 do
     frame.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
     frame.Position = UDim2.new(0, 0, 0, (i - 1) * 48)
     frame.Size = UDim2.new(1, 0, 0, 45)
+    frame.ClipsDescendants = true
     Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
     
     local vpf = Instance.new("ViewportFrame")
@@ -214,6 +217,7 @@ for i = 1, 3 do
     vpf.Position = UDim2.new(0, 3, 0, 3)
     vpf.Size = UDim2.new(0, 39, 0, 39)
     vpf.Visible = false
+    vpf.ClipsDescendants = true
     Instance.new("UICorner", vpf).CornerRadius = UDim.new(0, 4)
     
     local cam = Instance.new("Camera")
@@ -270,9 +274,10 @@ local function SetupViewportCamera(vpf, cam, model)
     clone:PivotTo(CFrame.new(0, 0, 0))
     
     local maxSize = math.max(size.X, size.Y, size.Z)
-    local distance = maxSize * 1.2
+    local distance = maxSize * 1.8
     
-    cam.CFrame = CFrame.new(Vector3.new(distance * 0.5, distance * 0.3, distance * 0.5), Vector3.new(0, 0, 0))
+    cam.FieldOfView = 50
+    cam.CFrame = CFrame.new(Vector3.new(distance * 0.6, distance * 0.4, distance * 0.6), Vector3.new(0, 0, 0))
 end
 
 local function UpdateUI()
