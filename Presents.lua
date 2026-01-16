@@ -270,9 +270,9 @@ local function SetupViewportCamera(vpf, cam, model)
     clone:PivotTo(CFrame.new(0, 0, 0))
     
     local maxSize = math.max(size.X, size.Y, size.Z)
-    local distance = maxSize * 2
+    local distance = maxSize * 1.2
     
-    cam.CFrame = CFrame.new(Vector3.new(distance * 0.7, distance * 0.5, distance * 0.7), Vector3.new(0, 0, 0))
+    cam.CFrame = CFrame.new(Vector3.new(distance * 0.5, distance * 0.3, distance * 0.5), Vector3.new(0, 0, 0))
 end
 
 local function UpdateUI()
